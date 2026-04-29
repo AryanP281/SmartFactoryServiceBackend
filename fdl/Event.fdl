@@ -1,0 +1,23 @@
+package at.ac.uibk.dps.cirrina.fory.exchange;
+
+import "./ContextVariable.fdl";
+
+ option java_multiple_files = false;
+ option java_outer_classname = "EventFdl";
+
+ enum EventChannel {
+     INTERNAL = 1;
+     EXTERNAL = 2;
+     PERIPHERAL = 3;
+ }
+
+ message Event
+ {
+     string topic = 1;
+     EventChannel channel = 2;
+     list<ContextVariable> data = 3;
+     string target = 4;
+     string source = 5;
+     string id = 6;
+     fixed_uint64 emittedTime = 7;
+ }

@@ -1,0 +1,24 @@
+package at.ac.uibk.dps.cirrina.fory.exchange;
+
+option java_multiple_files = false;
+option java_outer_classname = "ContextVariableFdl";
+
+union Value
+{
+    int32 integer = 1;
+    float32 float = 2;
+    int64 long = 3;
+    float64 double = 4;
+    string string = 5;
+    bool bool = 6;
+    bytes bytes = 7;
+    list<Value> array = 8;
+    list<Value> valueList = 9;
+    map<Value,Value> valueMap = 10;
+}
+
+message ContextVariable
+{
+    string name = 1;
+    Value value = 2;
+}
