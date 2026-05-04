@@ -1,9 +1,5 @@
 package org.example
 
-import at.ac.uibk.dps.cirrina.csm.Csml
-import at.ac.uibk.dps.cirrina.spec.ContextVariable
-import at.ac.uibk.dps.cirrina.spec.Event
-import at.ac.uibk.dps.cirrina.execution.util.Serializer
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import org.apache.fory.Fory
@@ -11,12 +7,26 @@ import org.apache.fory.ThreadSafeFory
 import org.apache.fory.config.Language
 import org.apache.fory.memory.MemoryBuffer
 import java.util.concurrent.ThreadLocalRandom
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.use
 
 //TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
 // click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
 fun main()
 {
+    val fory: ThreadSafeFory =
+        Fory.builder().withLanguage(Language.XLANG).withRefTracking(true).buildThreadSafeFory().apply {
+            register(EmptyRequest::class.java)
+            register(BeamDetectionResponse::class.java)
+            register(StatisticsRequest::class.java)
+            register(MessageProcessingRequest::class.java)
+            register(PhotoScanResponse::class.java)
+            register(PickupResponse::class.java)
+            register(AssembleResponse::class.java)
+        }
+
+    val threadBuffer = ThreadLocal.withInitial { MemoryBuffer.newHeapBuffer(1024) }
+
     val httpServer = HttpServer.create(InetSocketAddress(6000), 0)
 
     httpServer.createContext("/movebelt") { exchange ->
@@ -41,11 +51,13 @@ fun main()
         exchange.use {
             val rand = ThreadLocalRandom.current().nextInt(1,101)
 
-            val respData =
-                listOf<ContextVariable>(ContextVariable("validObject", rand <= 95))
-            val serializedResp = Serializer.serialize(respData)
-            exchange.sendResponseHeaders(200, serializedResp.size.toLong())
-            exchange.responseBody.use { stream -> stream.write(serializedResp) }
+            val response = PhotoScanResponse(rand <= 100)
+
+            val buffer = threadBuffer.get().apply { writerIndex(0) }
+            fory.serialize(buffer, response)
+
+            exchange.sendResponseHeaders(200, buffer.writerIndex().toLong())
+            exchange.responseBody.use { stream -> stream.write(buffer.getBytes(0, buffer.writerIndex())) }
         }
     }
 
@@ -53,10 +65,13 @@ fun main()
         exchange.use {
             val rand = ThreadLocalRandom.current().nextInt(1,101)
 
-            val respData = listOf<ContextVariable>(ContextVariable("interrupted", rand <= 90))
-            val serializedResp = Serializer.serialize(respData)
-            exchange.sendResponseHeaders(200, serializedResp.size.toLong())
-            exchange.responseBody.use { stream -> stream.write(serializedResp) }
+            val response = BeamDetectionResponse(true)
+
+            val buffer = threadBuffer.get().apply { writerIndex(0) }
+            fory.serialize(buffer, response)
+
+            exchange.sendResponseHeaders(200, buffer.writerIndex().toLong())
+            exchange.responseBody.use { stream -> stream.write(buffer.getBytes(0, buffer.writerIndex())) }
         }
     }
 
@@ -64,32 +79,41 @@ fun main()
         exchange.use {
             val rand = ThreadLocalRandom.current().nextInt(1,101)
 
-            val respData = listOf<ContextVariable>(ContextVariable("interrupted", rand <= 75))
-            val serializedResp = Serializer.serialize(respData)
-            exchange.sendResponseHeaders(200, serializedResp.size.toLong())
-            exchange.responseBody.use { stream -> stream.write(serializedResp) }
+            val response = BeamDetectionResponse(true)
+
+            val buffer = threadBuffer.get().apply { writerIndex(0) }
+            fory.serialize(buffer, response)
+
+            exchange.sendResponseHeaders(200, buffer.writerIndex().toLong())
+            exchange.responseBody.use { stream -> stream.write(buffer.getBytes(0, buffer.writerIndex())) }
         }
     }
 
     httpServer.createContext("/pickup") { exchange ->
         exchange.use {
-            val respData = listOf<ContextVariable>(ContextVariable("success", true))
-            val serializedResp = Serializer.serialize(respData)
+            val rand = ThreadLocalRandom.current().nextInt(1,101)
 
-//            Thread.sleep(2000)
-            exchange.sendResponseHeaders(200, serializedResp.size.toLong())
-            exchange.responseBody.use { stream -> stream.write(serializedResp) }
+            val response = PickupResponse(rand <= 500)
+
+            val buffer = threadBuffer.get().apply { writerIndex(0) }
+            fory.serialize(buffer, response)
+
+            exchange.sendResponseHeaders(200, buffer.writerIndex().toLong())
+            exchange.responseBody.use { stream -> stream.write(buffer.getBytes(0, buffer.writerIndex())) }
         }
     }
 
     httpServer.createContext("/assemble") { exchange ->
         exchange.use {
-            val respData = listOf<ContextVariable>(ContextVariable("success", true))
-            val serializedResp = Serializer.serialize(respData)
+            val rand = ThreadLocalRandom.current().nextInt(1,101)
 
-//            Thread.sleep(5000)
-            exchange.sendResponseHeaders(200, serializedResp.size.toLong())
-            exchange.responseBody.use { stream -> stream.write(serializedResp) }
+            val response = AssembleResponse(rand <= 50)
+
+            val buffer = threadBuffer.get().apply { writerIndex(0) }
+            fory.serialize(buffer, response)
+
+            exchange.sendResponseHeaders(200, buffer.writerIndex().toLong())
+            exchange.responseBody.use { stream -> stream.write(buffer.getBytes(0, buffer.writerIndex())) }
         }
     }
 
@@ -101,34 +125,32 @@ fun main()
 
     httpServer.createContext("/process/email") { exchange ->
         exchange.use { exchange ->
-            val cv =
-                Serializer.deserialize<List<ContextVariable>>(exchange.requestBody.readAllBytes())[0]
+            val data = fory.deserialize(exchange.requestBody.readAllBytes()) as MessageProcessingRequest
             exchange.sendResponseHeaders(200, -1)
-            println("\nSending email with msg: ${cv.value as String}")
+            println("\nSending email with msg: ${data.msg}")
         }
     }
 
     httpServer.createContext("/process/sms") { exchange ->
         exchange.use { exchange ->
-            val cv =
-                Serializer.deserialize<List<ContextVariable>>(exchange.requestBody.readAllBytes())[0]
+            val data = fory.deserialize(exchange.requestBody.readAllBytes()) as MessageProcessingRequest
             exchange.sendResponseHeaders(200, -1)
-            println("\nSending sms with msg: ${cv.value as String}")
+            println("\nSending sms with msg: ${data.msg}")
         }
     }
 
     httpServer.createContext("/statistics") { exchange ->
-        var reqData : List<ContextVariable> = emptyList()
+        var reqData : StatisticsRequest? = null
         exchange.use { exchange ->
-            reqData = Serializer.deserialize(exchange.requestBody.readAllBytes())
+            reqData = fory.deserialize(exchange.requestBody.readAllBytes()) as StatisticsRequest
             exchange.sendResponseHeaders(200, -1)
         }
 
         println("\nReceived statistics: ")
-        reqData.forEach { cv ->
-            println("${cv.name} = ${cv.value}")
-        }
-
+        println("nScans = ${reqData?.nScans ?: -1}")
+        println("nAssemblies = ${reqData?.nAssemblies ?: -1}")
+        println("Products Completed = ${reqData?.productsCompleted ?: -1}")
+        println("Job Done = ${reqData?.jobDone ?: -1}")
     }
 
     httpServer.start()
