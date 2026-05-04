@@ -51,7 +51,8 @@ fun main()
         exchange.use {
             val rand = ThreadLocalRandom.current().nextInt(1,101)
 
-            val response = PhotoScanResponse(rand <= 100)
+            val response = PhotoScanResponse(rand <= 60)
+            if(rand > 60) println("/scanphoto failed")
 
             val buffer = threadBuffer.get().apply { writerIndex(0) }
             fory.serialize(buffer, response)
@@ -65,7 +66,8 @@ fun main()
         exchange.use {
             val rand = ThreadLocalRandom.current().nextInt(1,101)
 
-            val response = BeamDetectionResponse(true)
+            val response = BeamDetectionResponse(rand <= 50)
+            if(rand > 50) println("/detectbeam/start failed")
 
             val buffer = threadBuffer.get().apply { writerIndex(0) }
             fory.serialize(buffer, response)
@@ -79,7 +81,8 @@ fun main()
         exchange.use {
             val rand = ThreadLocalRandom.current().nextInt(1,101)
 
-            val response = BeamDetectionResponse(true)
+            val response = BeamDetectionResponse(rand <= 40)
+            if(rand > 40) println("/detectbeam/end failed")
 
             val buffer = threadBuffer.get().apply { writerIndex(0) }
             fory.serialize(buffer, response)
@@ -93,7 +96,8 @@ fun main()
         exchange.use {
             val rand = ThreadLocalRandom.current().nextInt(1,101)
 
-            val response = PickupResponse(rand <= 500)
+            val response = PickupResponse(rand <= 80)
+            if(rand > 80) println("/pickup failed")
 
             val buffer = threadBuffer.get().apply { writerIndex(0) }
             fory.serialize(buffer, response)
@@ -107,7 +111,8 @@ fun main()
         exchange.use {
             val rand = ThreadLocalRandom.current().nextInt(1,101)
 
-            val response = AssembleResponse(rand <= 50)
+            val response = AssembleResponse(rand <= 75)
+            if(rand > 75) println("/assemble failed")
 
             val buffer = threadBuffer.get().apply { writerIndex(0) }
             fory.serialize(buffer, response)
