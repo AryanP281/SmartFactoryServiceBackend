@@ -42,7 +42,7 @@ fun main()
             val rand = ThreadLocalRandom.current().nextInt(1,101)
 
             val respData =
-                listOf<ContextVariable>(ContextVariable("validObject", rand <= 95))
+                listOf<ContextVariable>(ContextVariable("validObject", rand <= 50))
             val serializedResp = Serializer.serialize(respData)
             exchange.sendResponseHeaders(200, serializedResp.size.toLong())
             exchange.responseBody.use { stream -> stream.write(serializedResp) }
@@ -53,7 +53,7 @@ fun main()
         exchange.use {
             val rand = ThreadLocalRandom.current().nextInt(1,101)
 
-            val respData = listOf<ContextVariable>(ContextVariable("interrupted", rand <= 90))
+            val respData = listOf<ContextVariable>(ContextVariable("interrupted", rand <= 900))
             val serializedResp = Serializer.serialize(respData)
             exchange.sendResponseHeaders(200, serializedResp.size.toLong())
             exchange.responseBody.use { stream -> stream.write(serializedResp) }
@@ -64,7 +64,7 @@ fun main()
         exchange.use {
             val rand = ThreadLocalRandom.current().nextInt(1,101)
 
-            val respData = listOf<ContextVariable>(ContextVariable("interrupted", rand <= 75))
+            val respData = listOf<ContextVariable>(ContextVariable("interrupted", rand <= 750))
             val serializedResp = Serializer.serialize(respData)
             exchange.sendResponseHeaders(200, serializedResp.size.toLong())
             exchange.responseBody.use { stream -> stream.write(serializedResp) }
