@@ -42,7 +42,7 @@ fun main()
             val rand = ThreadLocalRandom.current().nextInt(1,101)
 
             val respData =
-                listOf<ContextVariable>(ContextVariable("validObject", rand <= 50))
+                listOf<ContextVariable>(ContextVariable("validObject", rand <= 60))
             val serializedResp = Serializer.serialize(respData)
             exchange.sendResponseHeaders(200, serializedResp.size.toLong())
             exchange.responseBody.use { stream -> stream.write(serializedResp) }
@@ -53,7 +53,7 @@ fun main()
         exchange.use {
             val rand = ThreadLocalRandom.current().nextInt(1,101)
 
-            val respData = listOf<ContextVariable>(ContextVariable("interrupted", rand <= 900))
+            val respData = listOf<ContextVariable>(ContextVariable("interrupted", rand <= 50))
             val serializedResp = Serializer.serialize(respData)
             exchange.sendResponseHeaders(200, serializedResp.size.toLong())
             exchange.responseBody.use { stream -> stream.write(serializedResp) }
@@ -64,7 +64,7 @@ fun main()
         exchange.use {
             val rand = ThreadLocalRandom.current().nextInt(1,101)
 
-            val respData = listOf<ContextVariable>(ContextVariable("interrupted", rand <= 750))
+            val respData = listOf<ContextVariable>(ContextVariable("interrupted", rand <= 40))
             val serializedResp = Serializer.serialize(respData)
             exchange.sendResponseHeaders(200, serializedResp.size.toLong())
             exchange.responseBody.use { stream -> stream.write(serializedResp) }
@@ -73,7 +73,9 @@ fun main()
 
     httpServer.createContext("/pickup") { exchange ->
         exchange.use {
-            val respData = listOf<ContextVariable>(ContextVariable("success", true))
+            val rand = ThreadLocalRandom.current().nextInt(1,101)
+
+            val respData = listOf<ContextVariable>(ContextVariable("success", rand <= 80))
             val serializedResp = Serializer.serialize(respData)
 
 //            Thread.sleep(2000)
@@ -84,7 +86,9 @@ fun main()
 
     httpServer.createContext("/assemble") { exchange ->
         exchange.use {
-            val respData = listOf<ContextVariable>(ContextVariable("success", true))
+            val rand = ThreadLocalRandom.current().nextInt(1,101)
+
+            val respData = listOf<ContextVariable>(ContextVariable("success", rand <= 75))
             val serializedResp = Serializer.serialize(respData)
 
 //            Thread.sleep(5000)
