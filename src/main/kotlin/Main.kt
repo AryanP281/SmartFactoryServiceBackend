@@ -1,17 +1,31 @@
 package org.example
 
-import at.ac.uibk.dps.cirrina.csm.Csml
+import at.ac.uibk.dps.cirrina.csm.Csml.EventChannel
 import at.ac.uibk.dps.cirrina.spec.ContextVariable
 import at.ac.uibk.dps.cirrina.spec.Event
 import at.ac.uibk.dps.cirrina.execution.util.Serializer
 import com.sun.net.httpserver.HttpServer
+import io.zenoh.Config
+import io.zenoh.Zenoh
+import io.zenoh.bytes.ZBytes
+import io.zenoh.keyexpr.KeyExpr
 import java.net.InetSocketAddress
-import org.apache.fory.Fory
-import org.apache.fory.ThreadSafeFory
-import org.apache.fory.config.Language
-import org.apache.fory.memory.MemoryBuffer
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ThreadLocalRandom
+import java.util.concurrent.TimeUnit
 import kotlin.use
+
+val executorService : ScheduledExecutorService = Executors.newScheduledThreadPool(1)
+val zenohConfig = Config.default()
+val zenohSession = Zenoh.open(zenohConfig).getOrThrow()
+val startKey = "events/peripheral/eBeamInterruptedStart"
+val endKey = "events/peripheral/eBeamInterruptedEnd"
+val zenohStartPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom(startKey).getOrThrow()).getOrThrow()
+val zenohEndPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom(endKey).getOrThrow()).getOrThrow()
+
+//Config Vars
+val BELT_MOVEMENT_TIME_MS : Long = 2000
 
 //TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
 // click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
@@ -23,6 +37,15 @@ fun main()
         exchange.use {
             exchange.sendResponseHeaders(200,-1)
         }
+
+        executorService.schedule({
+            val beamInterruptedEndEvent = Event("eBeamInterruptedEnd", EventChannel.PERIPHERAL, data = listOf(
+                ContextVariable("detected", true)
+            ), target = "assemblyController")
+            val eventPayload = ZBytes.from(Serializer.serialize(beamInterruptedEndEvent))
+
+            zenohEndPublisher.put(eventPayload).onFailure { exe -> println("failed to send event '$beamInterruptedEndEvent' - $exe") }.onSuccess { println("Successfully sent event '$beamInterruptedEndEvent'") }
+        }, BELT_MOVEMENT_TIME_MS, TimeUnit.MILLISECONDS)
     }
 
     httpServer.createContext("/stopbelt") { exchange ->
@@ -33,7 +56,12 @@ fun main()
 
     httpServer.createContext("/takephoto") { exchange ->
         exchange.use {
-            exchange.sendResponseHeaders(200,-1)
+            val respData =
+                listOf<ContextVariable>(ContextVariable("data", 100))
+            val serializedResp = Serializer.serialize(respData)
+
+            exchange.sendResponseHeaders(200, serializedResp.size.toLong())
+            exchange.responseBody.use { stream -> stream.write(serializedResp) }
         }
     }
 
@@ -137,4 +165,20 @@ fun main()
 
     httpServer.start()
     println("Http Server Started at http://localhost:6000")
+
+    executorService.scheduleWithFixedDelay({
+        try {
+            val beamInterruptedStartEvent = Event("eBeamInterruptedStart", EventChannel.PERIPHERAL, data = listOf(
+                ContextVariable("detected", true)
+            ), target = "assemblyController")
+            val eventPayload = ZBytes.from(Serializer.serialize(beamInterruptedStartEvent))
+
+            zenohStartPublisher.put(eventPayload).onFailure { exe -> println("failed to send event '$beamInterruptedStartEvent' - $exe") }.onSuccess { println("Successfully sent event '$beamInterruptedStartEvent'") }
+        }
+        catch(exe : Exception) {
+            println(exe)
+        }
+
+    }, 1000, 5000, TimeUnit.MILLISECONDS)
+
 }

@@ -18,6 +18,8 @@ dependencies {
     implementation("org.apache.fory:fory-core:0.15.0")
     implementation("org.apache.fory:fory-kotlin:0.15.0")
 
+    implementation("org.eclipse.zenoh:zenoh-kotlin:1.7.2")
+
     implementation(files("libs/cirrina-2.1.0-all.jar"))
 }
 
