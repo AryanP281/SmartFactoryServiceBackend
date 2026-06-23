@@ -1,5 +1,8 @@
 package org.example
 
+import ai.onnxruntime.OnnxTensor
+import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtSession
 import at.ac.uibk.dps.cirrina.csm.Csml.EventChannel
 import at.ac.uibk.dps.cirrina.spec.ContextVariable
 import at.ac.uibk.dps.cirrina.spec.Event
@@ -9,42 +12,77 @@ import io.zenoh.Config
 import io.zenoh.Zenoh
 import io.zenoh.bytes.ZBytes
 import io.zenoh.keyexpr.KeyExpr
+import io.zenoh.pubsub.Publisher
+import org.slf4j.LoggerFactory
+import java.awt.Color
+import java.awt.Graphics2D
+import java.awt.Image
+import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
+import java.lang.Math.pow
 import java.net.InetSocketAddress
+import java.nio.FloatBuffer
+import java.nio.file.Files
+import java.nio.file.Paths
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import javax.imageio.ImageIO
+import kotlin.math.exp
+import kotlin.math.min
+import kotlin.math.pow
+import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 import kotlin.use
 
-val executorService : ScheduledExecutorService = Executors.newScheduledThreadPool(1)
+val executorService : ScheduledExecutorService = Executors.newScheduledThreadPool(8)
 val zenohConfig = Config.default()
 val zenohSession = Zenoh.open(zenohConfig).getOrThrow()
-val startKey = "events/peripheral/eBeamInterruptedStart"
-val endKey = "events/peripheral/eBeamInterruptedEnd"
-val zenohStartPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom(startKey).getOrThrow()).getOrThrow()
-val zenohEndPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom(endKey).getOrThrow()).getOrThrow()
+const val startBeamInterruptionTopic = "eBeamInterruptedStart"
+const val endBeamInterruptionTopic = "eBeamInterruptedEnd"
+const val armPickupTopic = "eCheckPickUpSuccess"
+const val assemblyTopic = "eCheckAssembleSuccess"
+val zenohStartPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$startBeamInterruptionTopic").getOrThrow()).getOrThrow()
+val zenohEndPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$endBeamInterruptionTopic").getOrThrow()).getOrThrow()
+val zenohArmPickupPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$armPickupTopic").getOrThrow()).getOrThrow()
+val zenohAssemblyPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$assemblyTopic").getOrThrow()).getOrThrow()
+
+val ortEnv : OrtEnvironment = OrtEnvironment.getEnvironment()
+val ortSession : OrtSession = ortEnv.createSession("models/yolov8n.onnx", OrtSession.SessionOptions())
+val logger = LoggerFactory.getLogger("org.example.MainKt")
 
 //Config Vars
-val BELT_MOVEMENT_TIME_MS : Long = 2000
+const val PART_ARRIVAL_RATE_PER_SEC : Double = 50.0
+const val BELT_MOVEMENT_TIME_MS : Long = 4000
+const val VALID_OBJ_PROB : Double = 0.99
+const val PICKUP_MIN_FAILURE_PROB : Double = 0.01
+const val PICKUP_MAX_FAILURE_PROB : Double = 0.25
+const val ASSEMBLY_MIN_FAILURE_PROB : Double = 0.1
+const val ASSEMBLY_MAX_FAILURE_PROB : Double = 0.40
+val validObjectImageNames : Array<String> = arrayOf("test.png", "test2.png", "test5.png", "test6.png")
+val invalidObjectImageNames : Array<String> = arrayOf("test3.png", "test4.png", "test7.png", "test8.png")
+const val EVENT_RETRY_TIMEOUT_MS : Long = 10000
 
 //TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
 // click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
-fun main()
-{
+fun main() {
+
     val httpServer = HttpServer.create(InetSocketAddress(6000), 0)
 
+    val lastUnackedRequest = AtomicInteger(0)
     httpServer.createContext("/movebelt") { exchange ->
         exchange.use {
             exchange.sendResponseHeaders(200,-1)
         }
 
-        executorService.schedule({
-            val beamInterruptedEndEvent = Event("eBeamInterruptedEnd", EventChannel.PERIPHERAL, data = listOf(
-                ContextVariable("detected", true)
-            ), target = "assemblyController")
-            val eventPayload = ZBytes.from(Serializer.serialize(beamInterruptedEndEvent))
+        val currRequestId = lastUnackedRequest.incrementAndGet()
 
-            zenohEndPublisher.put(eventPayload).onFailure { exe -> println("failed to send event '$beamInterruptedEndEvent' - $exe") }.onSuccess { println("Successfully sent event '$beamInterruptedEndEvent'") }
+        executorService.schedule({
+            val endBeamInterruptedEvent = Event(endBeamInterruptionTopic, EventChannel.PERIPHERAL, data=listOf(ContextVariable("id", currRequestId)))
+
+            emitEventWithRetry(endBeamInterruptedEvent, zenohEndPublisher, currRequestId, lastUnackedRequest)
         }, BELT_MOVEMENT_TIME_MS, TimeUnit.MILLISECONDS)
     }
 
@@ -56,73 +94,86 @@ fun main()
 
     httpServer.createContext("/takephoto") { exchange ->
         exchange.use {
-            val respData =
-                listOf<ContextVariable>(ContextVariable("data", 100))
-            val serializedResp = Serializer.serialize(respData)
+            try {
+                val respData = mutableListOf<ContextVariable>()
 
-            exchange.sendResponseHeaders(200, serializedResp.size.toLong())
-            exchange.responseBody.use { stream -> stream.write(serializedResp) }
+                val rand = ThreadLocalRandom.current().nextDouble()
+                if(rand <= VALID_OBJ_PROB)
+                    respData.add(ContextVariable("data", Files.readAllBytes(Paths.get("imgs", "valid", validObjectImageNames[(rand*100).toInt() % 4]))))
+                else
+                    respData.add(ContextVariable("data", Files.readAllBytes(Paths.get("imgs", "invalid", invalidObjectImageNames[(rand*100).toInt() % 4]))))
+
+                val serializedResp = Serializer.serialize(respData)
+
+                exchange.sendResponseHeaders(200, serializedResp.size.toLong())
+                exchange.responseBody.use { stream -> stream.write(serializedResp) }
+            }
+            catch(exe : Exception) {
+                logger.error("Failed to take photo", exe)
+                exchange.sendResponseHeaders(500,-1)
+            }
         }
     }
 
     httpServer.createContext("/scanphoto") { exchange ->
         exchange.use {
-            val rand = ThreadLocalRandom.current().nextInt(1,101)
+            try {
+                val input = Serializer.deserialize<List<ContextVariable>>(exchange.requestBody.readAllBytes())
+                if(input.isEmpty() || input[0].name != "imgData")
+                    throw IllegalArgumentException("Invalid input")
 
-            val respData =
-                listOf<ContextVariable>(ContextVariable("validObject", rand <= 60))
-            val serializedResp = Serializer.serialize(respData)
-            exchange.sendResponseHeaders(200, serializedResp.size.toLong())
-            exchange.responseBody.use { stream -> stream.write(serializedResp) }
+                val imgData = input[0].value as? ByteArray ?: throw IllegalArgumentException("Invalid input")
+
+                val validObj = detectPart(imgData, intArrayOf(640,640), ortEnv, ortSession)
+                val respData = listOf<ContextVariable>(ContextVariable("validObject", validObj))
+                val serializedResp = Serializer.serialize(respData)
+
+                exchange.sendResponseHeaders(200, serializedResp.size.toLong())
+                exchange.responseBody.use { stream -> stream.write(serializedResp) }
+            }
+            catch(exe : IllegalArgumentException)
+            {
+                logger.error("Failed to scan photo", exe)
+                exchange.sendResponseHeaders(400,-1)
+            }
+            catch(exe : Exception) {
+                logger.error("Failed to scan photo", exe)
+                exchange.sendResponseHeaders(500,-1)
+            }
         }
     }
 
-    httpServer.createContext("/detectbeam/start") { exchange ->
-        exchange.use {
-            val rand = ThreadLocalRandom.current().nextInt(1,101)
-
-            val respData = listOf<ContextVariable>(ContextVariable("interrupted", rand <= 50))
-            val serializedResp = Serializer.serialize(respData)
-            exchange.sendResponseHeaders(200, serializedResp.size.toLong())
-            exchange.responseBody.use { stream -> stream.write(serializedResp) }
-        }
-    }
-
-    httpServer.createContext("/detectbeam/end") { exchange ->
-        exchange.use {
-            val rand = ThreadLocalRandom.current().nextInt(1,101)
-
-            val respData = listOf<ContextVariable>(ContextVariable("interrupted", rand <= 40))
-            val serializedResp = Serializer.serialize(respData)
-            exchange.sendResponseHeaders(200, serializedResp.size.toLong())
-            exchange.responseBody.use { stream -> stream.write(serializedResp) }
-        }
-    }
-
+    val pickupOpsCount = AtomicInteger(0)
     httpServer.createContext("/pickup") { exchange ->
         exchange.use {
-            val rand = ThreadLocalRandom.current().nextInt(1,101)
+            val failureProb = getOperationWeibullFailureProb(PICKUP_MIN_FAILURE_PROB, PICKUP_MAX_FAILURE_PROB, pickupOpsCount.getAndIncrement())
+            val rand = ThreadLocalRandom.current().nextDouble()
 
-            val respData = listOf<ContextVariable>(ContextVariable("success", rand <= 80))
+            val pickupSuccess = rand >= failureProb
+            val respData = listOf<ContextVariable>(ContextVariable("success", pickupSuccess))
             val serializedResp = Serializer.serialize(respData)
 
-//            Thread.sleep(2000)
+            Thread.sleep(100L) //Pickup time based on - https://www.yaskawa.fr/applications/par-applications/application/pick-place_a10963?utm_source=chatgpt.com
             exchange.sendResponseHeaders(200, serializedResp.size.toLong())
             exchange.responseBody.use { stream -> stream.write(serializedResp) }
         }
     }
 
+    val assemblyOpsCount = AtomicInteger(0)
     httpServer.createContext("/assemble") { exchange ->
         exchange.use {
-            val rand = ThreadLocalRandom.current().nextInt(1,101)
+            val failureProb = getOperationWeibullFailureProb(ASSEMBLY_MIN_FAILURE_PROB, ASSEMBLY_MAX_FAILURE_PROB, assemblyOpsCount.getAndIncrement())
+            val rand = ThreadLocalRandom.current().nextDouble()
 
-            val respData = listOf<ContextVariable>(ContextVariable("success", rand <= 75))
+            val assemblySuccess = rand >= failureProb
+            val respData = listOf<ContextVariable>(ContextVariable("success", assemblySuccess))
             val serializedResp = Serializer.serialize(respData)
 
-//            Thread.sleep(5000)
+            Thread.sleep(2000L)
             exchange.sendResponseHeaders(200, serializedResp.size.toLong())
             exchange.responseBody.use { stream -> stream.write(serializedResp) }
         }
+
     }
 
     httpServer.createContext("/returntostart") { exchange ->
@@ -136,7 +187,7 @@ fun main()
             val cv =
                 Serializer.deserialize<List<ContextVariable>>(exchange.requestBody.readAllBytes())[0]
             exchange.sendResponseHeaders(200, -1)
-            println("\nSending email with msg: ${cv.value as String}")
+            logger.info("\nSending email with msg: ${cv.value as String}")
         }
     }
 
@@ -145,7 +196,7 @@ fun main()
             val cv =
                 Serializer.deserialize<List<ContextVariable>>(exchange.requestBody.readAllBytes())[0]
             exchange.sendResponseHeaders(200, -1)
-            println("\nSending sms with msg: ${cv.value as String}")
+            logger.info("\nSending sms with msg: ${cv.value as String}")
         }
     }
 
@@ -156,29 +207,225 @@ fun main()
             exchange.sendResponseHeaders(200, -1)
         }
 
-        println("\nReceived statistics: ")
-        reqData.forEach { cv ->
-            println("${cv.name} = ${cv.value}")
+        val statisticsSb = buildString {
+            append("\nReceived statistics: ")
+            reqData.forEach { cv ->
+                append("\n${cv.name} = ${cv.value}")
+            }
         }
+        logger.info(statisticsSb)
 
     }
 
+    Runtime.getRuntime().addShutdownHook(Thread {
+        shutdown(httpServer)
+    })
+
     httpServer.start()
-    println("Http Server Started at http://localhost:6000")
+    logger.info("Http Server Started at http://localhost:6000")
 
-    executorService.scheduleWithFixedDelay({
-        try {
-            val beamInterruptedStartEvent = Event("eBeamInterruptedStart", EventChannel.PERIPHERAL, data = listOf(
-                ContextVariable("detected", true)
-            ), target = "assemblyController")
-            val eventPayload = ZBytes.from(Serializer.serialize(beamInterruptedStartEvent))
+    val arrivalTime = getNextArrivalTime(PART_ARRIVAL_RATE_PER_SEC)
+    executorService.schedule({
+        emitStartBeam()
+    }, (arrivalTime*1000.0).roundToLong(), TimeUnit.MILLISECONDS)
 
-            zenohStartPublisher.put(eventPayload).onFailure { exe -> println("failed to send event '$beamInterruptedStartEvent' - $exe") }.onSuccess { println("Successfully sent event '$beamInterruptedStartEvent'") }
+}
+
+fun emitStartBeam()
+{
+    try {
+        val beamInterruptedStartEvent = Event(startBeamInterruptionTopic, EventChannel.PERIPHERAL, data = listOf(
+            ContextVariable("detected", true)
+        ), target = "assemblyController")
+        val eventPayload = ZBytes.from(Serializer.serialize(beamInterruptedStartEvent))
+
+        zenohStartPublisher.put(eventPayload).onFailure { exe -> logger.error("failed to send event '$beamInterruptedStartEvent'", exe) }
+
+        //Scheduling next beam
+        val nextArrivalTime = getNextArrivalTime(PART_ARRIVAL_RATE_PER_SEC)
+        executorService.schedule({
+            emitStartBeam()
+        }, (nextArrivalTime*1000).roundToLong(), TimeUnit.MILLISECONDS)
+    }
+    catch(exe : Exception) {
+        logger.error(exe.message, exe)
+    }
+}
+
+fun emitEvent(event : Event, publisher : Publisher)
+{
+    val eventPayload = ZBytes.from(Serializer.serialize(event))
+
+    publisher.put(eventPayload).onFailure { exe -> logger.error("failed to send event '$event'", exe) }
+}
+
+fun emitEventWithRetry(event : Event, publisher : Publisher, eventId : Int, lastUnackedRequest : AtomicInteger)
+{
+    if(lastUnackedRequest.get() == eventId)
+    {
+        emitEvent(event, publisher)
+        executorService.schedule({
+            emitEventWithRetry(event, publisher, eventId, lastUnackedRequest)
+        }, EVENT_RETRY_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+    }
+}
+
+fun detectPart(imgData : ByteArray, onnxInputDims : IntArray, env : OrtEnvironment, session : OrtSession, confThreshold : Float = 0.25f) : Boolean
+{
+    try {
+        val inputWidth = onnxInputDims[0]
+        val inputHeight = onnxInputDims[1]
+
+        val img = ImageIO.read(ByteArrayInputStream(imgData))
+
+        val resized = letterboxImage(img, inputWidth, inputHeight)
+        val chwfTensor = toCHWFTensor(resized)
+
+        val inputName = session.inputNames.iterator().next()
+
+        OnnxTensor.createTensor(env, FloatBuffer.wrap(chwfTensor), longArrayOf(1, 3, inputWidth.toLong(), inputHeight.toLong())).use { tensor ->
+            session.run(mapOf(inputName to tensor)).use { outputs ->
+                val detections = outputs[0].value as Array<Array<FloatArray>>
+
+                for(detection in detections[0])
+                {
+                    if(detection.size < 6) continue
+
+                    val conf = detection[4]
+                    if(conf < confThreshold) continue
+
+                    val classId = detection[5]
+                    if(classId == 39f) return true
+                }
+            }
         }
-        catch(exe : Exception) {
-            println(exe)
+    }
+    catch(exe : Exception)
+    {
+        logger.error("Failed to detect object", exe)
+    }
+
+    return false
+}
+
+fun toCHWFTensor(img : BufferedImage) : FloatArray
+{
+    val tensor = FloatArray(3 * img.width * img.height)
+
+    val offsets = intArrayOf(0, img.width * img.height, 2 * img.width * img.height)
+
+    for (y in 0 until img.height)
+    {
+        for (x in 0 until img.width)
+        {
+            val rgb = img.getRGB(x, y)
+            val r = ((rgb shr 16) and 0xFF) / 255.0f
+            val g = ((rgb shr 8) and 0xFF) / 255.0f
+            val b = (rgb and 0xFF) / 255.0f
+
+            tensor[offsets[0]++] = r
+            tensor[offsets[1]++] = g
+            tensor[offsets[2]++] = b
         }
+    }
 
-    }, 1000, 5000, TimeUnit.MILLISECONDS)
+    return tensor
+}
 
+fun letterboxImage(src: BufferedImage, targetW: Int, targetH: Int): BufferedImage {
+    val scale = min(
+        targetW.toDouble() / src.width.toDouble(),
+        targetH.toDouble() / src.height.toDouble()
+    )
+
+    val newW = (src.width * scale).roundToInt()
+    val newH = (src.height * scale).roundToInt()
+
+    val resizedTmp = src.getScaledInstance(newW, newH, Image.SCALE_SMOOTH)
+    val out = BufferedImage(targetW, targetH, BufferedImage.TYPE_INT_RGB)
+
+    val g: Graphics2D = out.createGraphics()
+    g.color = Color(114, 114, 114)
+    g.fillRect(0, 0, targetW, targetH)
+
+    val x = (targetW - newW) / 2
+    val y = (targetH - newH) / 2
+    g.drawImage(resizedTmp, x, y, null)
+    g.dispose()
+
+    return out
+}
+
+fun shutdown(httpServer : HttpServer) {
+    try {
+        httpServer.stop(0)
+    }
+    catch(exe : Exception)
+    {
+        logger.error("Failed to shutdown http server", exe)
+    }
+
+    try {
+        executorService.shutdown()
+        if(!executorService.awaitTermination(5, TimeUnit.SECONDS))
+            executorService.shutdownNow()
+    }
+    catch(exe : Exception)
+    {
+        logger.error("Failed to shutdown executor service", exe)
+        executorService.shutdownNow()
+    }
+
+    try {
+        zenohStartPublisher.close()
+    }
+    catch(exe : Exception)
+    {
+        logger.error("Failed to shutdown zenoh start publisher", exe)
+    }
+
+    try {
+        zenohEndPublisher.close()
+    }
+    catch(exe : Exception)
+    {
+        logger.error("Failed to shutdown zenoh end publisher", exe)
+    }
+
+    try {
+        zenohSession.close()
+    }
+    catch(exe : Exception)
+    {
+        logger.error("Failed to shutdown zenoh session", exe)
+    }
+
+    try {
+        ortSession.close()
+    }
+    catch(exe : Exception)
+    {
+        logger.error("Failed to shutdown ort session", exe)
+    }
+
+    try {
+        ortEnv.close()
+    }
+    catch(exe : Exception)
+    {
+        logger.error("Failed to shutdown ort environment", exe)
+    }
+}
+
+fun getNextArrivalTime(arrivalRate : Double) : Double
+{
+    val expo = ThreadLocalRandom.current().nextExponential()
+    return (expo / arrivalRate)
+}
+
+fun getOperationWeibullFailureProb(minFailureProb : Double, maxFailureProb : Double, operation : Int, shape : Double = 3.0, scale : Double = 100.0) : Double
+{
+    //Monotonically increasing Weibull-shaped probability
+
+    return minFailureProb + (maxFailureProb - minFailureProb) * (1 - exp(-(operation.toDouble() / scale).pow(shape)))
 }

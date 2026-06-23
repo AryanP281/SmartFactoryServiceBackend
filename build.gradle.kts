@@ -20,6 +20,11 @@ dependencies {
 
     implementation("org.eclipse.zenoh:zenoh-kotlin:1.7.2")
 
+    implementation("com.microsoft.onnxruntime:onnxruntime:latest.release")
+
+    implementation("org.slf4j:slf4j-api:2.0.16")
+    runtimeOnly("ch.qos.logback:logback-classic:1.5.16")
+
     implementation(files("libs/cirrina-2.1.0-all.jar"))
 }
 
