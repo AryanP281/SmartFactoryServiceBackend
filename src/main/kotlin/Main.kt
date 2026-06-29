@@ -29,6 +29,7 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import javax.imageio.ImageIO
 import kotlin.math.exp
 import kotlin.math.min
@@ -42,25 +43,32 @@ val zenohConfig = Config.default()
 val zenohSession = Zenoh.open(zenohConfig).getOrThrow()
 const val startBeamInterruptionTopic = "eBeamInterruptedStart"
 const val endBeamInterruptionTopic = "eBeamInterruptedEnd"
-const val armPickupTopic = "eCheckPickUpSuccess"
+const val armPickupTopic = "eUpdatePickupStatus"
 const val assemblyTopic = "eCheckAssembleSuccess"
+const val armResetTopic = "eResetArm"
+const val objectDisposalTopic = "eObjectDiscarded"
 val zenohStartPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$startBeamInterruptionTopic").getOrThrow()).getOrThrow()
 val zenohEndPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$endBeamInterruptionTopic").getOrThrow()).getOrThrow()
 val zenohArmPickupPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$armPickupTopic").getOrThrow()).getOrThrow()
 val zenohAssemblyPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$assemblyTopic").getOrThrow()).getOrThrow()
+val zenohArmResetPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$armResetTopic").getOrThrow()).getOrThrow()
+val zenohObjectDisposalPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$objectDisposalTopic").getOrThrow()).getOrThrow()
 
 val ortEnv : OrtEnvironment = OrtEnvironment.getEnvironment()
 val ortSession : OrtSession = ortEnv.createSession("models/yolov8n.onnx", OrtSession.SessionOptions())
 val logger = LoggerFactory.getLogger("org.example.MainKt")
 
 //Config Vars
-const val PART_ARRIVAL_RATE_PER_SEC : Double = 50.0
+const val PART_ARRIVAL_RATE_PER_SEC : Double = 10.0
 const val BELT_MOVEMENT_TIME_MS : Long = 4000
 const val VALID_OBJ_PROB : Double = 0.99
 const val PICKUP_MIN_FAILURE_PROB : Double = 0.01
 const val PICKUP_MAX_FAILURE_PROB : Double = 0.25
 const val ASSEMBLY_MIN_FAILURE_PROB : Double = 0.1
 const val ASSEMBLY_MAX_FAILURE_PROB : Double = 0.40
+const val PICKUP_TIME_MS : Long = 100L //Pickup time based on - https://www.yaskawa.fr/applications/par-applications/application/pick-place_a10963?utm_source=chatgpt.com
+const val ASSEMBLY_TIME_MS : Long = 2000L
+const val ARM_RESET_TIME_MS : Long = 500
 val validObjectImageNames : Array<String> = arrayOf("test.png", "test2.png", "test5.png", "test6.png")
 val invalidObjectImageNames : Array<String> = arrayOf("test3.png", "test4.png", "test7.png", "test8.png")
 const val EVENT_RETRY_TIMEOUT_MS : Long = 10000
@@ -71,18 +79,21 @@ fun main() {
 
     val httpServer = HttpServer.create(InetSocketAddress(6000), 0)
 
-    val lastUnackedRequest = AtomicInteger(0)
+    val endBeamLastUnackedRequest = AtomicLong(0)
     httpServer.createContext("/movebelt") { exchange ->
         exchange.use {
             exchange.sendResponseHeaders(200,-1)
         }
 
-        val currRequestId = lastUnackedRequest.incrementAndGet()
+        val currRequestId = endBeamLastUnackedRequest.updateAndGet({curr ->
+            if(curr == Long.MAX_VALUE) 0
+            else curr + 1
+        })
 
         executorService.schedule({
             val endBeamInterruptedEvent = Event(endBeamInterruptionTopic, EventChannel.PERIPHERAL, data=listOf(ContextVariable("id", currRequestId)))
 
-            emitEventWithRetry(endBeamInterruptedEvent, zenohEndPublisher, currRequestId, lastUnackedRequest)
+            emitEventWithRetry(endBeamInterruptedEvent, zenohEndPublisher, currRequestId, endBeamLastUnackedRequest)
         }, BELT_MOVEMENT_TIME_MS, TimeUnit.MILLISECONDS)
     }
 
@@ -143,43 +154,64 @@ fun main() {
         }
     }
 
-    val pickupOpsCount = AtomicInteger(0)
+    val pickupOpsCount = AtomicLong(0)
     httpServer.createContext("/pickup") { exchange ->
         exchange.use {
-            val failureProb = getOperationWeibullFailureProb(PICKUP_MIN_FAILURE_PROB, PICKUP_MAX_FAILURE_PROB, pickupOpsCount.getAndIncrement())
-            val rand = ThreadLocalRandom.current().nextDouble()
-
-            val pickupSuccess = rand >= failureProb
-            val respData = listOf<ContextVariable>(ContextVariable("success", pickupSuccess))
-            val serializedResp = Serializer.serialize(respData)
-
-            Thread.sleep(100L) //Pickup time based on - https://www.yaskawa.fr/applications/par-applications/application/pick-place_a10963?utm_source=chatgpt.com
-            exchange.sendResponseHeaders(200, serializedResp.size.toLong())
-            exchange.responseBody.use { stream -> stream.write(serializedResp) }
+            exchange.sendResponseHeaders(200,-1)
         }
+
+        val currRequestId = pickupOpsCount.updateAndGet { curr ->
+            if(curr == Long.MAX_VALUE) 0
+            else curr + 1
+        }
+
+        executorService.schedule({
+            val failureProb = getOperationWeibullFailureProb(PICKUP_MIN_FAILURE_PROB, PICKUP_MAX_FAILURE_PROB, currRequestId)
+            val rand = ThreadLocalRandom.current().nextDouble()
+            val pickupSuccess = rand >= failureProb
+
+            val pickupEvent = Event(armPickupTopic, EventChannel.PERIPHERAL, data=listOf(ContextVariable("success", pickupSuccess)))
+            emitEventWithRetry(pickupEvent, zenohArmPickupPublisher, currRequestId, pickupOpsCount, retryTimeoutMs = 20000L)
+        }, PICKUP_TIME_MS, TimeUnit.MILLISECONDS)
     }
 
-    val assemblyOpsCount = AtomicInteger(0)
+    val assemblyOpsCount = AtomicLong(0)
     httpServer.createContext("/assemble") { exchange ->
         exchange.use {
-            val failureProb = getOperationWeibullFailureProb(ASSEMBLY_MIN_FAILURE_PROB, ASSEMBLY_MAX_FAILURE_PROB, assemblyOpsCount.getAndIncrement())
-            val rand = ThreadLocalRandom.current().nextDouble()
-
-            val assemblySuccess = rand >= failureProb
-            val respData = listOf<ContextVariable>(ContextVariable("success", assemblySuccess))
-            val serializedResp = Serializer.serialize(respData)
-
-            Thread.sleep(2000L)
-            exchange.sendResponseHeaders(200, serializedResp.size.toLong())
-            exchange.responseBody.use { stream -> stream.write(serializedResp) }
+            exchange.sendResponseHeaders(200,-1)
         }
+
+        val currRequestId = assemblyOpsCount.updateAndGet { curr ->
+            if(curr == Long.MAX_VALUE) 0
+            else curr + 1
+        }
+
+        executorService.schedule({
+            val failureProb = getOperationWeibullFailureProb(ASSEMBLY_MIN_FAILURE_PROB, ASSEMBLY_MAX_FAILURE_PROB, currRequestId)
+            val rand = ThreadLocalRandom.current().nextDouble()
+            val assemblySuccess = rand >= failureProb
+
+            val assemblyEvent = Event(assemblyTopic, EventChannel.PERIPHERAL, data=listOf(ContextVariable("success", assemblySuccess)))
+            emitEventWithRetry(assemblyEvent, zenohAssemblyPublisher, currRequestId, assemblyOpsCount, retryTimeoutMs = 20000L)
+        }, ASSEMBLY_TIME_MS, TimeUnit.MILLISECONDS)
 
     }
 
+    val armResetLastUnackedRequest = AtomicLong(0)
     httpServer.createContext("/returntostart") { exchange ->
         exchange.use {
             exchange.sendResponseHeaders(200,-1)
         }
+
+        val currRequestId = armResetLastUnackedRequest.updateAndGet({curr ->
+            if(curr == Long.MAX_VALUE) 0
+            else curr + 1
+        })
+
+        executorService.schedule({
+            val armResetEvent = Event(armResetTopic, EventChannel.PERIPHERAL, data = listOf(ContextVariable("success", true)))
+            emitEventWithRetry(armResetEvent, zenohArmResetPublisher, currRequestId, armResetLastUnackedRequest)
+        }, ARM_RESET_TIME_MS, TimeUnit.MILLISECONDS)
     }
 
     httpServer.createContext("/process/email") { exchange ->
@@ -215,6 +247,26 @@ fun main() {
         }
         logger.info(statisticsSb)
 
+        val nScans = reqData.filter { cv -> cv.name == "nScans" }[0]
+        val nAssemblies = reqData.filter { cv -> cv.name == "nAssemblies" }[0]
+        if((nScans.value as Int) < (nAssemblies.value as Int)) logger.warn("Statistical discrepancy")
+    }
+
+    val objectDiscardLastUnackedRequest = AtomicLong(0)
+    httpServer.createContext("/discardobject") { exchange ->
+        exchange.use {
+            exchange.sendResponseHeaders(200,-1)
+        }
+
+        val currRequestId = objectDiscardLastUnackedRequest.updateAndGet({curr ->
+            if(curr == Long.MAX_VALUE) 0
+            else curr + 1
+        })
+
+        executorService.schedule({
+            val objectDisposalEvent = Event(objectDisposalTopic, EventChannel.PERIPHERAL, data = listOf(ContextVariable("success", true)))
+            emitEventWithRetry(objectDisposalEvent, zenohObjectDisposalPublisher, currRequestId, objectDiscardLastUnackedRequest)
+        }, BELT_MOVEMENT_TIME_MS, TimeUnit.MILLISECONDS)
     }
 
     Runtime.getRuntime().addShutdownHook(Thread {
@@ -259,14 +311,14 @@ fun emitEvent(event : Event, publisher : Publisher)
     publisher.put(eventPayload).onFailure { exe -> logger.error("failed to send event '$event'", exe) }
 }
 
-fun emitEventWithRetry(event : Event, publisher : Publisher, eventId : Int, lastUnackedRequest : AtomicInteger)
+fun emitEventWithRetry(event : Event, publisher : Publisher, eventId : Long, lastUnackedRequest : AtomicLong, retryTimeoutMs: Long = EVENT_RETRY_TIMEOUT_MS)
 {
     if(lastUnackedRequest.get() == eventId)
     {
         emitEvent(event, publisher)
         executorService.schedule({
             emitEventWithRetry(event, publisher, eventId, lastUnackedRequest)
-        }, EVENT_RETRY_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        },  retryTimeoutMs, TimeUnit.MILLISECONDS)
     }
 }
 
@@ -423,7 +475,7 @@ fun getNextArrivalTime(arrivalRate : Double) : Double
     return (expo / arrivalRate)
 }
 
-fun getOperationWeibullFailureProb(minFailureProb : Double, maxFailureProb : Double, operation : Int, shape : Double = 3.0, scale : Double = 100.0) : Double
+fun getOperationWeibullFailureProb(minFailureProb : Double, maxFailureProb : Double, operation : Long, shape : Double = 3.0, scale : Double = 100.0) : Double
 {
     //Monotonically increasing Weibull-shaped probability
 
