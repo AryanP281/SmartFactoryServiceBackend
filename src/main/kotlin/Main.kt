@@ -43,12 +43,14 @@ val zenohConfig = Config.default()
 val zenohSession = Zenoh.open(zenohConfig).getOrThrow()
 const val startBeamInterruptionTopic = "eBeamInterruptedStart"
 const val endBeamInterruptionTopic = "eBeamInterruptedEnd"
+const val photoScannedTopic = "ePhotoCaptured"
 const val armPickupTopic = "eUpdatePickupStatus"
 const val assemblyTopic = "eCheckAssembleSuccess"
 const val armResetTopic = "eResetArm"
 const val objectDisposalTopic = "eObjectDiscarded"
 val zenohStartPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$startBeamInterruptionTopic").getOrThrow()).getOrThrow()
 val zenohEndPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$endBeamInterruptionTopic").getOrThrow()).getOrThrow()
+val zenohPhotoCapturePublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$photoScannedTopic").getOrThrow()).getOrThrow()
 val zenohArmPickupPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$armPickupTopic").getOrThrow()).getOrThrow()
 val zenohAssemblyPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$assemblyTopic").getOrThrow()).getOrThrow()
 val zenohArmResetPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$armResetTopic").getOrThrow()).getOrThrow()
@@ -60,7 +62,7 @@ val logger = LoggerFactory.getLogger("org.example.MainKt")
 
 //Config Vars
 const val PART_ARRIVAL_RATE_PER_SEC : Double = 10.0
-const val BELT_MOVEMENT_TIME_MS : Long = 4000
+const val BELT_MOVEMENT_TIME_MS : Long = 400
 const val VALID_OBJ_PROB : Double = 0.99
 const val PICKUP_MIN_FAILURE_PROB : Double = 0.01
 const val PICKUP_MAX_FAILURE_PROB : Double = 0.25
@@ -157,42 +159,44 @@ fun main() {
     val pickupOpsCount = AtomicLong(0)
     httpServer.createContext("/pickup") { exchange ->
         exchange.use {
+            logger.info("Pickup Invoked")
             exchange.sendResponseHeaders(200,-1)
         }
 
-        val currRequestId = pickupOpsCount.updateAndGet { curr ->
-            if(curr == Long.MAX_VALUE) 0
-            else curr + 1
-        }
-
         executorService.schedule({
-            val failureProb = getOperationWeibullFailureProb(PICKUP_MIN_FAILURE_PROB, PICKUP_MAX_FAILURE_PROB, currRequestId)
+            val opCount = pickupOpsCount.updateAndGet { curr ->
+                if(curr == Long.MAX_VALUE) curr
+                else curr + 1
+            }
+
+            val failureProb = getOperationWeibullFailureProb(PICKUP_MIN_FAILURE_PROB, PICKUP_MAX_FAILURE_PROB, opCount)
             val rand = ThreadLocalRandom.current().nextDouble()
             val pickupSuccess = rand >= failureProb
 
             val pickupEvent = Event(armPickupTopic, EventChannel.PERIPHERAL, data=listOf(ContextVariable("success", pickupSuccess)))
-            emitEventWithRetry(pickupEvent, zenohArmPickupPublisher, currRequestId, pickupOpsCount, retryTimeoutMs = 20000L)
+            emitEvent(pickupEvent, zenohArmPickupPublisher)
         }, PICKUP_TIME_MS, TimeUnit.MILLISECONDS)
     }
 
     val assemblyOpsCount = AtomicLong(0)
     httpServer.createContext("/assemble") { exchange ->
         exchange.use {
+            logger.info("Assembly Invoked")
             exchange.sendResponseHeaders(200,-1)
         }
 
-        val currRequestId = assemblyOpsCount.updateAndGet { curr ->
-            if(curr == Long.MAX_VALUE) 0
-            else curr + 1
-        }
-
         executorService.schedule({
-            val failureProb = getOperationWeibullFailureProb(ASSEMBLY_MIN_FAILURE_PROB, ASSEMBLY_MAX_FAILURE_PROB, currRequestId)
+            val opCount = assemblyOpsCount.updateAndGet { curr ->
+                if(curr == Long.MAX_VALUE) curr
+                else curr + 1
+            }
+
+            val failureProb = getOperationWeibullFailureProb(ASSEMBLY_MIN_FAILURE_PROB, ASSEMBLY_MAX_FAILURE_PROB, opCount)
             val rand = ThreadLocalRandom.current().nextDouble()
             val assemblySuccess = rand >= failureProb
 
             val assemblyEvent = Event(assemblyTopic, EventChannel.PERIPHERAL, data=listOf(ContextVariable("success", assemblySuccess)))
-            emitEventWithRetry(assemblyEvent, zenohAssemblyPublisher, currRequestId, assemblyOpsCount, retryTimeoutMs = 20000L)
+            emitEvent(assemblyEvent, zenohAssemblyPublisher)
         }, ASSEMBLY_TIME_MS, TimeUnit.MILLISECONDS)
 
     }
