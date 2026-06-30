@@ -43,14 +43,16 @@ val zenohConfig = Config.default()
 val zenohSession = Zenoh.open(zenohConfig).getOrThrow()
 const val startBeamInterruptionTopic = "eBeamInterruptedStart"
 const val endBeamInterruptionTopic = "eBeamInterruptedEnd"
-const val photoScannedTopic = "ePhotoCaptured"
+const val photoCapturedTopic = "ePhotoCaptured"
+const val photoScannedTopic = "ePhotoScanned"
 const val armPickupTopic = "eUpdatePickupStatus"
 const val assemblyTopic = "eCheckAssembleSuccess"
 const val armResetTopic = "eResetArm"
 const val objectDisposalTopic = "eObjectDiscarded"
 val zenohStartPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$startBeamInterruptionTopic").getOrThrow()).getOrThrow()
 val zenohEndPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$endBeamInterruptionTopic").getOrThrow()).getOrThrow()
-val zenohPhotoCapturePublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$photoScannedTopic").getOrThrow()).getOrThrow()
+val zenohPhotoCapturePublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$photoCapturedTopic").getOrThrow()).getOrThrow()
+val zenohPhotoScanPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$photoScannedTopic").getOrThrow()).getOrThrow()
 val zenohArmPickupPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$armPickupTopic").getOrThrow()).getOrThrow()
 val zenohAssemblyPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$assemblyTopic").getOrThrow()).getOrThrow()
 val zenohArmResetPublisher = zenohSession.declarePublisher(KeyExpr.tryFrom("events/peripheral/$armResetTopic").getOrThrow()).getOrThrow()
@@ -63,6 +65,8 @@ val logger = LoggerFactory.getLogger("org.example.MainKt")
 //Config Vars
 const val PART_ARRIVAL_RATE_PER_SEC : Double = 10.0
 const val BELT_MOVEMENT_TIME_MS : Long = 400
+const val PHOTOCAPTURE_TIME_MS : Long = 500
+const val PHOTOSCAN_TIME_MS : Long = 700
 const val VALID_OBJ_PROB : Double = 0.99
 const val PICKUP_MIN_FAILURE_PROB : Double = 0.01
 const val PICKUP_MAX_FAILURE_PROB : Double = 0.25
@@ -107,25 +111,26 @@ fun main() {
 
     httpServer.createContext("/takephoto") { exchange ->
         exchange.use {
+            exchange.sendResponseHeaders(200,-1)
+        }
+
+        executorService.schedule({
             try {
-                val respData = mutableListOf<ContextVariable>()
+                val photoCaptureEvent = Event(photoCapturedTopic, EventChannel.PERIPHERAL, data=mutableListOf())
 
                 val rand = ThreadLocalRandom.current().nextDouble()
                 if(rand <= VALID_OBJ_PROB)
-                    respData.add(ContextVariable("data", Files.readAllBytes(Paths.get("imgs", "valid", validObjectImageNames[(rand*100).toInt() % 4]))))
+                    (photoCaptureEvent.data as MutableList<ContextVariable>).add(ContextVariable("data", Files.readAllBytes(Paths.get("imgs", "valid", validObjectImageNames[(rand*100).toInt() % 4]))))
                 else
-                    respData.add(ContextVariable("data", Files.readAllBytes(Paths.get("imgs", "invalid", invalidObjectImageNames[(rand*100).toInt() % 4]))))
+                    (photoCaptureEvent.data as MutableList<ContextVariable>).add(ContextVariable("data", Files.readAllBytes(Paths.get("imgs", "invalid", invalidObjectImageNames[(rand*100).toInt() % 4]))))
 
-                val serializedResp = Serializer.serialize(respData)
-
-                exchange.sendResponseHeaders(200, serializedResp.size.toLong())
-                exchange.responseBody.use { stream -> stream.write(serializedResp) }
+                emitEvent(photoCaptureEvent, zenohPhotoCapturePublisher)
             }
             catch(exe : Exception) {
                 logger.error("Failed to take photo", exe)
-                exchange.sendResponseHeaders(500,-1)
             }
-        }
+
+        }, PHOTOCAPTURE_TIME_MS, TimeUnit.MILLISECONDS)
     }
 
     httpServer.createContext("/scanphoto") { exchange ->
@@ -137,12 +142,18 @@ fun main() {
 
                 val imgData = input[0].value as? ByteArray ?: throw IllegalArgumentException("Invalid input")
 
-                val validObj = detectPart(imgData, intArrayOf(640,640), ortEnv, ortSession)
-                val respData = listOf<ContextVariable>(ContextVariable("validObject", validObj))
-                val serializedResp = Serializer.serialize(respData)
+                executorService.schedule({
+                    try {
+                        val validObj = detectPart(imgData, intArrayOf(640,640), ortEnv, ortSession)
+                        val photoScanEvent = Event(photoScannedTopic, EventChannel.PERIPHERAL, data = listOf(ContextVariable("validObject", validObj)))
+                        emitEvent(photoScanEvent, zenohPhotoScanPublisher)
+                    }
+                    catch(exe : Exception) {
+                        logger.error("Failed to scan photo", exe)
+                    }
+                }, PHOTOSCAN_TIME_MS, TimeUnit.MILLISECONDS)
 
-                exchange.sendResponseHeaders(200, serializedResp.size.toLong())
-                exchange.responseBody.use { stream -> stream.write(serializedResp) }
+                exchange.sendResponseHeaders(200,-1)
             }
             catch(exe : IllegalArgumentException)
             {
@@ -153,13 +164,14 @@ fun main() {
                 logger.error("Failed to scan photo", exe)
                 exchange.sendResponseHeaders(500,-1)
             }
+
+            exchange.sendResponseHeaders(200,-1)
         }
     }
 
     val pickupOpsCount = AtomicLong(0)
     httpServer.createContext("/pickup") { exchange ->
         exchange.use {
-            logger.info("Pickup Invoked")
             exchange.sendResponseHeaders(200,-1)
         }
 
@@ -181,7 +193,6 @@ fun main() {
     val assemblyOpsCount = AtomicLong(0)
     httpServer.createContext("/assemble") { exchange ->
         exchange.use {
-            logger.info("Assembly Invoked")
             exchange.sendResponseHeaders(200,-1)
         }
 
