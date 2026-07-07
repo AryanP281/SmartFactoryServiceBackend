@@ -19,7 +19,6 @@ import java.awt.Graphics2D
 import java.awt.Image
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
-import java.lang.Math.pow
 import java.net.InetSocketAddress
 import java.nio.FloatBuffer
 import java.nio.file.Files
@@ -28,7 +27,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import javax.imageio.ImageIO
 import kotlin.math.exp
