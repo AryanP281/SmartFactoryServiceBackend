@@ -46,3 +46,6 @@ bin/
 
 ###ML Models ###
 models/*
+
+### Images ###
+imgs/*
