@@ -18,6 +18,13 @@ dependencies {
     implementation("org.apache.fory:fory-core:0.15.0")
     implementation("org.apache.fory:fory-kotlin:0.15.0")
 
+    implementation("com.microsoft.onnxruntime:onnxruntime:latest.release")
+
+    implementation("io.dapr:dapr-sdk:1.18.0")
+
+    implementation("org.slf4j:slf4j-api:2.0.16")
+    runtimeOnly("ch.qos.logback:logback-classic:1.5.16")
+
     implementation(files("libs/cirrina-2.1.0-all.jar"))
 }
 
