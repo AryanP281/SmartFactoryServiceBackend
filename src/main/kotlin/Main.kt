@@ -210,7 +210,7 @@ fun main()
         exchange.use { exchange ->
             val data = fory.deserialize(exchange.requestBody.readAllBytes()) as MessageProcessingRequest
             exchange.sendResponseHeaders(200, -1)
-            println("\nSending email with msg: ${data.msg}")
+            logger.info("\nSending email with msg: ${data.msg}")
         }
     }
 
@@ -218,7 +218,7 @@ fun main()
         exchange.use { exchange ->
             val data = fory.deserialize(exchange.requestBody.readAllBytes()) as MessageProcessingRequest
             exchange.sendResponseHeaders(200, -1)
-            println("\nSending sms with msg: ${data.msg}")
+            logger.info("\nSending sms with msg: ${data.msg}")
         }
     }
 
@@ -229,11 +229,11 @@ fun main()
             exchange.sendResponseHeaders(200, -1)
         }
 
-        println("\nReceived statistics: ")
-        println("nScans = ${reqData?.nScans ?: -1}")
-        println("nAssemblies = ${reqData?.nAssemblies ?: -1}")
-        println("Products Completed = ${reqData?.productsCompleted ?: -1}")
-        println("Job Done = ${reqData?.jobDone ?: -1}")
+        logger.info("\nReceived statistics: ")
+        logger.info("nScans = ${reqData?.nScans ?: -1}")
+        logger.info("nAssemblies = ${reqData?.nAssemblies ?: -1}")
+        logger.info("Products Completed = ${reqData?.productsCompleted ?: -1}")
+        logger.info("Job Done = ${reqData?.jobDone ?: -1}")
     }
 
     httpServer.createContext("/discardobject") { exchange ->
@@ -251,7 +251,7 @@ fun main()
     })
 
     httpServer.start()
-    println("Http Server Started at http://localhost:6000")
+    logger.info("Http Server Started at http://localhost:6000")
 
     val arrivalTime = getNextArrivalTime(PART_ARRIVAL_RATE_PER_SEC)
     executorService.schedule({
