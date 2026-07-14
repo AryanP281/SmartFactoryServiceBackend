@@ -26,7 +26,7 @@ dependencies {
     implementation("org.slf4j:slf4j-api:2.0.16")
     runtimeOnly("ch.qos.logback:logback-classic:1.5.16")
 
-    implementation(files("libs/cirrina-2.1.0-all.jar"))
+    implementation(files("libs/api.jar"))
 }
 
 kotlin {

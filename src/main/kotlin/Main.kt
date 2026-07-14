@@ -3,13 +3,14 @@ package org.example
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import at.ac.uibk.dps.smartfactory.api.MessageProcessingRequest
+import at.ac.uibk.dps.smartfactory.api.PhotoScanRequest
+import at.ac.uibk.dps.smartfactory.api.StatisticsRequest
+import at.ac.uibk.dps.smartfactory.api.ForyConfig
 import com.sun.net.httpserver.HttpServer
 import io.dapr.client.DaprClientBuilder
 import java.net.InetSocketAddress
-import org.apache.fory.Fory
 import org.apache.fory.ThreadSafeFory
-import org.apache.fory.config.Language
-import org.apache.fory.memory.MemoryBuffer
 import org.slf4j.LoggerFactory
 import java.awt.Color
 import java.awt.Graphics2D
@@ -67,15 +68,7 @@ val invalidObjectImageNames : Array<String> = arrayOf("test3.png", "test4.png", 
 
 fun main()
 {
-    val fory: ThreadSafeFory =
-        Fory.builder().withLanguage(Language.XLANG).withRefTracking(true).buildThreadSafeFory().apply {
-            register(EmptyRequest::class.java)
-            register(StatisticsRequest::class.java)
-            register(MessageProcessingRequest::class.java)
-            register(PhotoScanRequest::class.java)
-        }
-
-    val threadBuffer = ThreadLocal.withInitial { MemoryBuffer.newHeapBuffer(1024) }
+    val fory: ThreadSafeFory = ForyConfig.fory
 
     val httpServer = HttpServer.create(InetSocketAddress(6000), 0)
 
@@ -137,8 +130,6 @@ fun main()
                         logger.error("Failed to scan photo", exe)
                     }
                 }, PHOTOSCAN_TIME_MS, TimeUnit.MILLISECONDS)
-
-                exchange.sendResponseHeaders(200,-1)
             }
             catch(exe : IllegalArgumentException)
             {
