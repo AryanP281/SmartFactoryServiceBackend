@@ -4,6 +4,7 @@ plugins {
     application
     kotlin("jvm") version "2.3.10"
     id("application")
+    id("com.gradleup.shadow") version "9.0.0"
 }
 
 group = "org.example"
@@ -56,4 +57,14 @@ tasks.register("generateForyTypes", Exec::class.java) {
         "build/generated/fory/foryGenJava",
         "fdl/Event.fdl",
     )
+}
+
+tasks.shadowJar {
+    archiveFileName.set("backend.jar")
+
+    manifest {
+        attributes["Main-Class"] = application.mainClass.get()
+    }
+
+    mergeServiceFiles()
 }
