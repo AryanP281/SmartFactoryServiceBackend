@@ -19,6 +19,7 @@ import java.awt.Graphics2D
 import java.awt.Image
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.net.InetSocketAddress
 import java.nio.FloatBuffer
 import java.nio.file.Files
@@ -34,9 +35,14 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
+import kotlin.time.Clock
 import kotlin.use
 
 val executorService : ScheduledExecutorService = Executors.newScheduledThreadPool(8)
+//val zenohConfig =
+//    System.getenv("ZENOH_CONFIG_URI")?.let { path ->
+//            Config.fromFile(File(path)).getOrThrow()
+//        } ?: Config.default()
 val zenohConfig = Config.default()
 val zenohSession = Zenoh.open(zenohConfig).getOrThrow()
 const val startBeamInterruptionTopic = "eBeamInterruptedStart"
@@ -61,7 +67,7 @@ val ortSession : OrtSession = ortEnv.createSession("models/yolov8n.onnx", OrtSes
 val logger = LoggerFactory.getLogger("org.example.MainKt")
 
 //Config Vars
-const val PART_ARRIVAL_RATE_PER_SEC : Double = 10.0
+val PART_ARRIVAL_RATE_PER_SEC : Double = System.getenv("PART_ARRIVAl_RATE_PER_SEC")?.toDouble() ?: 100.0
 const val BELT_MOVEMENT_TIME_MS : Long = 400
 const val PHOTOCAPTURE_TIME_MS : Long = 500
 const val PHOTOSCAN_TIME_MS : Long = 700
@@ -95,9 +101,9 @@ fun main() {
         })
 
         executorService.schedule({
-            val endBeamInterruptedEvent = Event(endBeamInterruptionTopic, EventChannel.PERIPHERAL, data=listOf(ContextVariable("id", currRequestId)))
+            val endBeamInterruptedEvent = Event(endBeamInterruptionTopic, EventChannel.PERIPHERAL, data=listOf(ContextVariable("id", currRequestId)), source = "service", target="assemblyController", emittedTime = getEmitTime())
 
-            emitEventWithRetry(endBeamInterruptedEvent, zenohEndPublisher, currRequestId, endBeamLastUnackedRequest)
+            emitEvent(endBeamInterruptedEvent, zenohEndPublisher)
         }, BELT_MOVEMENT_TIME_MS, TimeUnit.MILLISECONDS)
     }
 
@@ -114,7 +120,7 @@ fun main() {
 
         executorService.schedule({
             try {
-                val photoCaptureEvent = Event(photoCapturedTopic, EventChannel.PERIPHERAL, data=mutableListOf())
+                val photoCaptureEvent = Event(photoCapturedTopic, EventChannel.PERIPHERAL, data=mutableListOf(), source = "service", target="assemblyController", emittedTime = getEmitTime(), )
 
                 val rand = ThreadLocalRandom.current().nextDouble()
                 if(rand <= VALID_OBJ_PROB)
@@ -143,7 +149,7 @@ fun main() {
                 executorService.schedule({
                     try {
                         val validObj = detectPart(imgData, intArrayOf(640,640), ortEnv, ortSession)
-                        val photoScanEvent = Event(photoScannedTopic, EventChannel.PERIPHERAL, data = listOf(ContextVariable("validObject", validObj)))
+                        val photoScanEvent = Event(photoScannedTopic, EventChannel.PERIPHERAL, data = listOf(ContextVariable("validObject", validObj)), source = "service", target="assemblyController", emittedTime = getEmitTime())
                         emitEvent(photoScanEvent, zenohPhotoScanPublisher)
                     }
                     catch(exe : Exception) {
@@ -183,7 +189,7 @@ fun main() {
             val rand = ThreadLocalRandom.current().nextDouble()
             val pickupSuccess = rand >= failureProb
 
-            val pickupEvent = Event(armPickupTopic, EventChannel.PERIPHERAL, data=listOf(ContextVariable("success", pickupSuccess)))
+            val pickupEvent = Event(armPickupTopic, EventChannel.PERIPHERAL, data=listOf(ContextVariable("success", pickupSuccess)),source = "service", target="arm", emittedTime = getEmitTime())
             emitEvent(pickupEvent, zenohArmPickupPublisher)
         }, PICKUP_TIME_MS, TimeUnit.MILLISECONDS)
     }
@@ -204,26 +210,20 @@ fun main() {
             val rand = ThreadLocalRandom.current().nextDouble()
             val assemblySuccess = rand >= failureProb
 
-            val assemblyEvent = Event(assemblyTopic, EventChannel.PERIPHERAL, data=listOf(ContextVariable("success", assemblySuccess)))
+            val assemblyEvent = Event(assemblyTopic, EventChannel.PERIPHERAL, data=listOf(ContextVariable("success", assemblySuccess)),source = "service", target="arm", emittedTime = getEmitTime())
             emitEvent(assemblyEvent, zenohAssemblyPublisher)
         }, ASSEMBLY_TIME_MS, TimeUnit.MILLISECONDS)
 
     }
 
-    val armResetLastUnackedRequest = AtomicLong(0)
     httpServer.createContext("/returntostart") { exchange ->
         exchange.use {
             exchange.sendResponseHeaders(200,-1)
         }
 
-        val currRequestId = armResetLastUnackedRequest.updateAndGet({curr ->
-            if(curr == Long.MAX_VALUE) 0
-            else curr + 1
-        })
-
         executorService.schedule({
-            val armResetEvent = Event(armResetTopic, EventChannel.PERIPHERAL, data = listOf(ContextVariable("success", true)))
-            emitEventWithRetry(armResetEvent, zenohArmResetPublisher, currRequestId, armResetLastUnackedRequest)
+            val armResetEvent = Event(armResetTopic, EventChannel.PERIPHERAL, data = listOf(ContextVariable("success", true)), source = "service", target="arm", emittedTime = getEmitTime())
+            emitEvent(armResetEvent, zenohArmResetPublisher)
         }, ARM_RESET_TIME_MS, TimeUnit.MILLISECONDS)
     }
 
@@ -265,20 +265,14 @@ fun main() {
         if((nScans.value as Int) < (nAssemblies.value as Int)) logger.warn("Statistical discrepancy")
     }
 
-    val objectDiscardLastUnackedRequest = AtomicLong(0)
     httpServer.createContext("/discardobject") { exchange ->
         exchange.use {
             exchange.sendResponseHeaders(200,-1)
         }
 
-        val currRequestId = objectDiscardLastUnackedRequest.updateAndGet({curr ->
-            if(curr == Long.MAX_VALUE) 0
-            else curr + 1
-        })
-
         executorService.schedule({
-            val objectDisposalEvent = Event(objectDisposalTopic, EventChannel.PERIPHERAL, data = listOf(ContextVariable("success", true)))
-            emitEventWithRetry(objectDisposalEvent, zenohObjectDisposalPublisher, currRequestId, objectDiscardLastUnackedRequest)
+            val objectDisposalEvent = Event(objectDisposalTopic, EventChannel.PERIPHERAL, data = listOf(ContextVariable("success", true)),source = "service", target="assemblyController", emittedTime = getEmitTime())
+            emitEvent(objectDisposalEvent, zenohObjectDisposalPublisher)
         }, BELT_MOVEMENT_TIME_MS, TimeUnit.MILLISECONDS)
     }
 
@@ -288,11 +282,12 @@ fun main() {
 
     httpServer.start()
     logger.info("Http Server Started at http://localhost:6000")
+    logger.info("Part arrival rate = $PART_ARRIVAL_RATE_PER_SEC/sec")
 
     val arrivalTime = getNextArrivalTime(PART_ARRIVAL_RATE_PER_SEC)
     executorService.schedule({
         emitStartBeam()
-    }, (arrivalTime*1000.0).roundToLong(), TimeUnit.MILLISECONDS)
+    }, 60000L, TimeUnit.MILLISECONDS)
 
 }
 
@@ -301,7 +296,7 @@ fun emitStartBeam()
     try {
         val beamInterruptedStartEvent = Event(startBeamInterruptionTopic, EventChannel.PERIPHERAL, data = listOf(
             ContextVariable("detected", true)
-        ), target = "assemblyController")
+        ),source = "service", target="assemblyController", emittedTime = getEmitTime())
         val eventPayload = ZBytes.from(Serializer.serialize(beamInterruptedStartEvent))
 
         zenohStartPublisher.put(eventPayload).onFailure { exe -> logger.error("failed to send event '$beamInterruptedStartEvent'", exe) }
@@ -493,4 +488,11 @@ fun getOperationWeibullFailureProb(minFailureProb : Double, maxFailureProb : Dou
     //Monotonically increasing Weibull-shaped probability
 
     return minFailureProb + (maxFailureProb - minFailureProb) * (1 - exp(-(operation.toDouble() / scale).pow(shape)))
+}
+
+fun getEmitTime() : Long
+{
+    val now = Clock.System.now()
+
+    return (now.epochSeconds * 1_000_000_000L) + now.nanosecondsOfSecond
 }

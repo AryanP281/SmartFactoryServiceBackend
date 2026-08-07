@@ -3,6 +3,7 @@ import sun.jvmstat.monitor.MonitoredVmUtil.mainClass
 plugins {
     kotlin("jvm") version "2.3.10"
     id("application")
+    id("com.gradleup.shadow") version "9.0.0"
 }
 
 group = "org.example"
@@ -25,7 +26,7 @@ dependencies {
     implementation("org.slf4j:slf4j-api:2.0.16")
     runtimeOnly("ch.qos.logback:logback-classic:1.5.16")
 
-    implementation(files("libs/cirrina-2.1.0-all.jar"))
+    implementation(files("libs/cirrina-2.2.0-all.jar"))
 }
 
 kotlin {
@@ -55,4 +56,14 @@ tasks.register("generateForyTypes", Exec::class.java) {
         "build/generated/fory/foryGenJava",
         "fdl/Event.fdl",
     )
+}
+
+tasks.shadowJar {
+    archiveFileName.set("backend.jar")
+
+    manifest {
+        attributes["Main-Class"] = application.mainClass.get()
+    }
+
+    mergeServiceFiles()
 }
