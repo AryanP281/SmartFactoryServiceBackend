@@ -31,6 +31,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import javax.imageio.ImageIO
 import kotlin.math.exp
+import kotlin.math.floor
 import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -67,22 +68,24 @@ val logger = LoggerFactory.getLogger("org.example.MainKt")
 
 //Config Vars
 val PUBLISH_START_DELAY : Long = System.getenv("PUBLISH_START_DELAY")?.toLong() ?: 0L
-val PART_ARRIVAL_RATE_PER_SEC : Double = System.getenv("PART_ARRIVAl_RATE_PER_SEC")?.toDouble() ?: 100.0
+val PART_ARRIVAL_RATE_PER_SEC : Double = System.getenv("PART_ARRIVAl_RATE_PER_SEC")?.toDouble() ?: 1.0
 const val BELT_MOVEMENT_TIME_MS : Long = 400
 const val PHOTOCAPTURE_TIME_MS : Long = 500
 const val PHOTOSCAN_TIME_MS : Long = 700
-const val VALID_OBJ_PROB : Double = 0.99
-const val PICKUP_MIN_FAILURE_PROB : Double = 0.01
-const val PICKUP_MAX_FAILURE_PROB : Double = 0.25
-const val ASSEMBLY_MIN_FAILURE_PROB : Double = 0.1
-const val ASSEMBLY_MAX_FAILURE_PROB : Double = 0.40
+const val VALID_OBJ_PROB : Double = 1.0
+const val PICKUP_MIN_FAILURE_PROB : Double = 0.0
+const val PICKUP_MAX_FAILURE_PROB : Double = 0.0
+const val ASSEMBLY_MIN_FAILURE_PROB : Double = 0.0
+const val ASSEMBLY_MAX_FAILURE_PROB : Double = 0.0
 const val PICKUP_TIME_MS : Long = 100L //Pickup time based on - https://www.yaskawa.fr/applications/par-applications/application/pick-place_a10963?utm_source=chatgpt.com
-const val ASSEMBLY_TIME_MS : Long = 2000L
+const val ASSEMBLY_TIME_MS : Long = 1000L
 const val ARM_RESET_TIME_MS : Long = 500
 val validObjectImageNames : Array<String> = arrayOf("test.png", "test2.png", "test5.png", "test6.png")
 val invalidObjectImageNames : Array<String> = arrayOf("test3.png", "test4.png", "test7.png", "test8.png")
 const val EVENT_RETRY_TIMEOUT_MS : Long = 10000
 
+//Measurement Vars
+var productionStartTime : Long = 0
 //TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
 // click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
 fun main() {
@@ -260,9 +263,10 @@ fun main() {
         }
         logger.info(statisticsSb)
 
-        val nScans = reqData.filter { cv -> cv.name == "nScans" }[0]
-        val nAssemblies = reqData.filter { cv -> cv.name == "nAssemblies" }[0]
-        if((nScans.value as Int) < (nAssemblies.value as Int)) logger.warn("Statistical discrepancy")
+        val nScans = (reqData.filter { cv -> cv.name == "nScans" }[0]).value as Int
+        val nAssemblies = (reqData.filter { cv -> cv.name == "nAssemblies" }[0]).value as Int
+        if(nScans < nAssemblies) logger.warn("Statistical discrepancy")
+        if(nScans - nAssemblies > 2) logger.warn("Logical discrepancy")
     }
 
     httpServer.createContext("/discardobject") { exchange ->
@@ -287,7 +291,6 @@ fun main() {
     executorService.schedule({
         emitStartBeam()
     }, PUBLISH_START_DELAY, TimeUnit.MILLISECONDS)
-
 }
 
 fun emitStartBeam()
@@ -301,10 +304,14 @@ fun emitStartBeam()
         zenohStartPublisher.put(eventPayload).onFailure { exe -> logger.error("failed to send event '$beamInterruptedStartEvent'", exe) }
 
         //Scheduling next beam
-        val nextArrivalTime = getNextArrivalTime(PART_ARRIVAL_RATE_PER_SEC)
+//        val nextArrivalTime = getNextArrivalTime(PART_ARRIVAL_RATE_PER_SEC)
+        val nextArrivalTime = floor(1.0 / PART_ARRIVAL_RATE_PER_SEC).toLong()
+//        executorService.schedule({
+//            emitStartBeam()
+//        }, (nextArrivalTime*1000).roundToLong(), TimeUnit.MILLISECONDS)
         executorService.schedule({
             emitStartBeam()
-        }, (nextArrivalTime*1000).roundToLong(), TimeUnit.MILLISECONDS)
+        }, (nextArrivalTime*1000L), TimeUnit.MILLISECONDS)
     }
     catch(exe : Exception) {
         logger.error(exe.message, exe)
