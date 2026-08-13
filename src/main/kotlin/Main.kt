@@ -51,7 +51,7 @@ val ortSession : OrtSession = ortEnv.createSession("models/yolov8n.onnx", OrtSes
 val logger = LoggerFactory.getLogger("org.example.MainKt")
 
 //Config Vars
-const val PART_ARRIVAL_RATE_PER_SEC : Double = 10.0
+val PART_ARRIVAL_RATE_PER_SEC : Double = System.getenv("PART_ARRIVAl_RATE_PER_SEC")?.toDouble() ?: 1.0
 const val BELT_MOVEMENT_TIME_MS : Long = 400
 const val PHOTOCAPTURE_TIME_MS : Long = 500
 const val PHOTOSCAN_TIME_MS : Long = 700
