@@ -83,9 +83,6 @@ const val ARM_RESET_TIME_MS : Long = 500
 val validObjectImageNames : Array<String> = arrayOf("test.png", "test2.png", "test5.png", "test6.png")
 val invalidObjectImageNames : Array<String> = arrayOf("test3.png", "test4.png", "test7.png", "test8.png")
 const val EVENT_RETRY_TIMEOUT_MS : Long = 10000
-
-//Measurement Vars
-var productionStartTime : Long = 0
 //TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
 // click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
 fun main() {
@@ -304,14 +301,15 @@ fun emitStartBeam()
         zenohStartPublisher.put(eventPayload).onFailure { exe -> logger.error("failed to send event '$beamInterruptedStartEvent'", exe) }
 
         //Scheduling next beam
-//        val nextArrivalTime = getNextArrivalTime(PART_ARRIVAL_RATE_PER_SEC)
-        val nextArrivalTime = floor(1.0 / PART_ARRIVAL_RATE_PER_SEC).toLong()
-//        executorService.schedule({
-//            emitStartBeam()
-//        }, (nextArrivalTime*1000).roundToLong(), TimeUnit.MILLISECONDS)
+        val nextArrivalTime = getNextArrivalTime(PART_ARRIVAL_RATE_PER_SEC)
         executorService.schedule({
             emitStartBeam()
-        }, (nextArrivalTime*1000L), TimeUnit.MILLISECONDS)
+        }, (nextArrivalTime*1_000_000_000L).roundToLong(), TimeUnit.NANOSECONDS)
+
+//        val nextArrivalTimeMcs : Long = (1000000.0 / PART_ARRIVAL_RATE_PER_SEC).toLong()
+//        executorService.schedule({
+//            emitStartBeam()
+//        }, nextArrivalTimeMcs, TimeUnit.MICROSECONDS)
     }
     catch(exe : Exception) {
         logger.error(exe.message, exe)
