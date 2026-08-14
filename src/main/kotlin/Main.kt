@@ -243,6 +243,7 @@ fun main()
 
     httpServer.start()
     logger.info("Http Server Started at http://localhost:6000")
+    logger.info("Part arrival rate = $PART_ARRIVAL_RATE_PER_SEC/sec")
 
     val arrivalTime = getNextArrivalTime(PART_ARRIVAL_RATE_PER_SEC)
     executorService.schedule({
