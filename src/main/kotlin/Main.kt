@@ -305,11 +305,6 @@ fun emitStartBeam()
         executorService.schedule({
             emitStartBeam()
         }, (nextArrivalTime*1_000_000_000L).roundToLong(), TimeUnit.NANOSECONDS)
-
-//        val nextArrivalTimeMcs : Long = (1000000.0 / PART_ARRIVAL_RATE_PER_SEC).toLong()
-//        executorService.schedule({
-//            emitStartBeam()
-//        }, nextArrivalTimeMcs, TimeUnit.MICROSECONDS)
     }
     catch(exe : Exception) {
         logger.error(exe.message, exe)
