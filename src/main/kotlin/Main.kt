@@ -51,6 +51,7 @@ val ortSession : OrtSession = ortEnv.createSession("models/yolov8n.onnx", OrtSes
 val logger = LoggerFactory.getLogger("org.example.MainKt")
 
 //Config Vars
+val PUBLISH_START_DELAY : Long = System.getenv("PUBLISH_START_DELAY")?.toLong() ?: 0L
 val PART_ARRIVAL_RATE_PER_SEC : Double = System.getenv("PART_ARRIVAl_RATE_PER_SEC")?.toDouble() ?: 1.0
 const val BELT_MOVEMENT_TIME_MS : Long = 400
 const val PHOTOCAPTURE_TIME_MS : Long = 500
@@ -245,10 +246,9 @@ fun main()
     logger.info("Http Server Started at http://localhost:6000")
     logger.info("Part arrival rate = $PART_ARRIVAL_RATE_PER_SEC/sec")
 
-    val arrivalTime = getNextArrivalTime(PART_ARRIVAL_RATE_PER_SEC)
     executorService.schedule({
         emitStartBeam()
-    }, (arrivalTime*1000.0).roundToLong(), TimeUnit.MILLISECONDS)
+    }, PUBLISH_START_DELAY, TimeUnit.MILLISECONDS)
 }
 
 fun detectPart(imgData : ByteArray, onnxInputDims : IntArray, env : OrtEnvironment, session : OrtSession, confThreshold : Float = 0.25f) : Boolean
