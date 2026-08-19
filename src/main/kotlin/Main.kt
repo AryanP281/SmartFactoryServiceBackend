@@ -247,6 +247,7 @@ fun main()
     logger.info("Part arrival rate = $PART_ARRIVAL_RATE_PER_SEC/sec")
 
     executorService.schedule({
+        logger.info("Starting publish")
         emitStartBeam()
     }, PUBLISH_START_DELAY, TimeUnit.MILLISECONDS)
 }
