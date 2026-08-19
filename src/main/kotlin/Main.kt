@@ -61,7 +61,7 @@ const val PICKUP_MIN_FAILURE_PROB : Double = 0.0
 const val PICKUP_MAX_FAILURE_PROB : Double = 0.0
 const val ASSEMBLY_MIN_FAILURE_PROB : Double = 0.0
 const val ASSEMBLY_MAX_FAILURE_PROB : Double = 0.0
-const val PICKUP_TIME_MS : Long = 100L //Pickup time based on - https://www.yaskawa.fr/applications/par-applications/application/pick-place_a10963?utm_source=chatgpt.com
+const val PICKUP_TIME_MS : Long = 100L
 const val ASSEMBLY_TIME_MS : Long = 1000L
 const val ARM_RESET_TIME_MS : Long = 500
 val validObjectImageNames : Array<String> = arrayOf("test.png", "test2.png", "test5.png", "test6.png")
