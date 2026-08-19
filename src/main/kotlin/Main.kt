@@ -360,7 +360,7 @@ fun emitStartBeam()
         val nextArrivalTime = getNextArrivalTime(PART_ARRIVAL_RATE_PER_SEC)
         executorService.schedule({
             emitStartBeam()
-        }, (nextArrivalTime*1000).roundToLong(), TimeUnit.MILLISECONDS)
+        }, (nextArrivalTime*1_000_000_000L).roundToLong(), TimeUnit.NANOSECONDS)
     }
     catch(exe : Exception) {
         logger.error(exe.message, exe)
