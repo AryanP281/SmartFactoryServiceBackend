@@ -37,7 +37,6 @@ import kotlin.use
 val executorService : ScheduledExecutorService = Executors.newScheduledThreadPool(8)
 
 val daprClient = DaprClientBuilder().build()
-const val startBeamInterruptionTopic = "eBeamInterruptedStart"
 const val endBeamInterruptionTopic = "eBeamInterruptedEnd"
 const val photoCapturedTopic = "ePhotoCaptured"
 const val photoScannedTopic = "ePhotoScanned"
@@ -51,8 +50,6 @@ val ortSession : OrtSession = ortEnv.createSession("models/yolov8n.onnx", OrtSes
 val logger = LoggerFactory.getLogger("org.example.MainKt")
 
 //Config Vars
-val PUBLISH_START_DELAY : Long = System.getenv("PUBLISH_START_DELAY")?.toLong() ?: 0L
-val PART_ARRIVAL_RATE_PER_SEC : Double = System.getenv("PART_ARRIVAl_RATE_PER_SEC")?.toDouble() ?: 1.0
 const val BELT_MOVEMENT_TIME_MS : Long = 400
 const val PHOTOCAPTURE_TIME_MS : Long = 500
 const val PHOTOSCAN_TIME_MS : Long = 700
@@ -244,12 +241,6 @@ fun main()
 
     httpServer.start()
     logger.info("Http Server Started at http://localhost:6000")
-    logger.info("Part arrival rate = $PART_ARRIVAL_RATE_PER_SEC/sec")
-
-    executorService.schedule({
-        logger.info("Starting publish")
-        emitStartBeam()
-    }, PUBLISH_START_DELAY, TimeUnit.MILLISECONDS)
 }
 
 fun detectPart(imgData : ByteArray, onnxInputDims : IntArray, env : OrtEnvironment, session : OrtSession, confThreshold : Float = 0.25f) : Boolean
@@ -343,28 +334,6 @@ fun getOperationWeibullFailureProb(minFailureProb : Double, maxFailureProb : Dou
     //Monotonically increasing Weibull-shaped probability
 
     return minFailureProb + (maxFailureProb - minFailureProb) * (1 - exp(-(operation.toDouble() / scale).pow(shape)))
-}
-
-fun getNextArrivalTime(arrivalRate : Double) : Double
-{
-    val expo = ThreadLocalRandom.current().nextExponential()
-    return (expo / arrivalRate)
-}
-
-fun emitStartBeam()
-{
-    try {
-        daprClient.publishEvent("pubsub", startBeamInterruptionTopic, mapOf<String,Any>()).subscribe()
-
-        //Scheduling next beam
-        val nextArrivalTime = getNextArrivalTime(PART_ARRIVAL_RATE_PER_SEC)
-        executorService.schedule({
-            emitStartBeam()
-        }, (nextArrivalTime*1_000_000_000L).roundToLong(), TimeUnit.NANOSECONDS)
-    }
-    catch(exe : Exception) {
-        logger.error(exe.message, exe)
-    }
 }
 
 fun shutdown(httpServer : HttpServer) {
