@@ -31,6 +31,7 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
+import kotlin.time.Clock
 import kotlin.use
 
 
@@ -76,7 +77,7 @@ fun main()
         }
 
         executorService.schedule({
-            daprClient.publishEvent("pubsub", endBeamInterruptionTopic, mapOf<String,Any>()).subscribe()
+            daprClient.publishEvent("pubsub", endBeamInterruptionTopic, mapOf<String,Any>("emittedTime" to getCurrentTimeNs())).subscribe()
         }, BELT_MOVEMENT_TIME_MS, TimeUnit.MILLISECONDS)
     }
 
@@ -101,7 +102,7 @@ fun main()
                 else
                     imgData = Files.readAllBytes(Paths.get("imgs", "invalid", invalidObjectImageNames[(rand*100).toInt() % 4]))
 
-                val response = mapOf("data" to imgData)
+                val response = mapOf("data" to imgData, "emittedTime" to getCurrentTimeNs())
                 daprClient.publishEvent("pubsub", photoCapturedTopic, response).subscribe()
             }
             catch(exe : Exception) {
@@ -122,7 +123,7 @@ fun main()
                 executorService.schedule({
                     try {
                         val validObj = detectPart(input, intArrayOf(640,640), ortEnv, ortSession)
-                        daprClient.publishEvent("pubsub", photoScannedTopic, mapOf("validObject" to validObj)).subscribe()
+                        daprClient.publishEvent("pubsub", photoScannedTopic, mapOf("validObject" to validObj, "emittedTime" to getCurrentTimeNs())).subscribe()
                     }
                     catch(exe : Exception) {
                         logger.error("Failed to scan photo", exe)
@@ -159,7 +160,7 @@ fun main()
             val rand = ThreadLocalRandom.current().nextDouble()
             val pickupSuccess = rand >= failureProb
 
-            daprClient.publishEvent("pubsub", armPickupTopic, pickupSuccess).subscribe()
+            daprClient.publishEvent("pubsub", armPickupTopic, mapOf("success" to pickupSuccess, "emittedTime" to getCurrentTimeNs())).subscribe()
         }, PICKUP_TIME_MS, TimeUnit.MILLISECONDS)
     }
 
@@ -180,7 +181,7 @@ fun main()
             val rand = ThreadLocalRandom.current().nextDouble()
             val assemblySuccess = rand >= failureProb
 
-            daprClient.publishEvent("pubsub", assemblyTopic, assemblySuccess).subscribe()
+            daprClient.publishEvent("pubsub", assemblyTopic, mapOf("success" to assemblySuccess, "emittedTime" to getCurrentTimeNs())).subscribe()
         }, ASSEMBLY_TIME_MS, TimeUnit.MILLISECONDS)
 
     }
@@ -191,7 +192,7 @@ fun main()
         }
 
         executorService.schedule({
-            daprClient.publishEvent("pubsub", armResetTopic, mapOf<String,Any>()).subscribe()
+            daprClient.publishEvent("pubsub", armResetTopic, mapOf<String,Any>("emittedTime" to getCurrentTimeNs())).subscribe()
         }, ARM_RESET_TIME_MS, TimeUnit.MILLISECONDS)
     }
 
@@ -231,7 +232,7 @@ fun main()
         }
 
         executorService.schedule({
-            daprClient.publishEvent("pubsub", objectDisposalTopic, mapOf<String,Any>()).subscribe()
+            daprClient.publishEvent("pubsub", objectDisposalTopic, mapOf<String,Any>("emittedTime" to getCurrentTimeNs())).subscribe()
         }, BELT_MOVEMENT_TIME_MS, TimeUnit.MILLISECONDS)
     }
 
@@ -371,4 +372,10 @@ fun shutdown(httpServer : HttpServer) {
     {
         logger.error("Failed to shutdown ort environment", exe)
     }
+}
+
+fun getCurrentTimeNs(): Long {
+    val now = Clock.System.now()
+
+    return now.epochSeconds * 1_000_000_000L + now.nanosecondsOfSecond
 }
